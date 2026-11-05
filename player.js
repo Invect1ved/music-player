@@ -31,6 +31,9 @@ let audioCtx;
 let analyser;
 let freq;
 let wave;
+let vizSource;
+let realViz = false;
+const vizCache = new Map();
 let levels = new Array(48).fill(0);
 
 function loadPlaylists() {
@@ -72,15 +75,61 @@ function currentTrack() {
 }
 
 async function ensureGraph() {
-  if (audioCtx) return;
-  audioCtx = new AudioContext();
-  const source = audioCtx.createMediaElementSource(audio);
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!audioCtx) audioCtx = new Ctx();
+  if (audioCtx.state === "suspended") await audioCtx.resume();
+  if (analyser) return;
   analyser = audioCtx.createAnalyser();
-  analyser.fftSize = 256;
-  source.connect(analyser);
-  analyser.connect(audioCtx.destination);
+  analyser.fftSize = 2048;
+  const silent = audioCtx.createGain();
+  silent.gain.value = 0;
+  analyser.connect(silent);
+  silent.connect(audioCtx.destination);
   freq = new Uint8Array(analyser.frequencyBinCount);
   wave = new Uint8Array(analyser.fftSize);
+}
+
+function stopViz() {
+  if (!vizSource) return;
+  try { vizSource.stop(); } catch { /* уже остановлен */ }
+  vizSource.disconnect();
+  vizSource = null;
+}
+
+async function bufferFor(src) {
+  if (vizCache.has(src)) return vizCache.get(src);
+  try {
+    const response = await fetch(src);
+    if (!response.ok) throw new Error(String(response.status));
+    const bytes = await response.arrayBuffer();
+    const buffer = await audioCtx.decodeAudioData(bytes);
+    vizCache.set(src, buffer);
+    return buffer;
+  } catch {
+    vizCache.set(src, null);
+    return null;
+  }
+}
+
+async function syncViz() {
+  if (audio.paused || !audio.src) {
+    stopViz();
+    realViz = false;
+    return;
+  }
+  await ensureGraph();
+  const buffer = await bufferFor(audio.src);
+  if (audio.paused) return;
+  stopViz();
+  if (!buffer) {
+    realViz = false;
+    return;
+  }
+  vizSource = audioCtx.createBufferSource();
+  vizSource.buffer = buffer;
+  vizSource.connect(analyser);
+  vizSource.start(0, Math.min(audio.currentTime || 0, Math.max(0, buffer.duration - 0.01)));
+  realViz = true;
 }
 
 async function playIndex(index) {
@@ -93,32 +142,47 @@ async function playIndex(index) {
     renderPlaylists();
     return;
   }
-  await ensureGraph();
-  if (audioCtx.state === "suspended") await audioCtx.resume();
+  stopViz();
+  const graph = ensureGraph();
   audio.src = track.src;
   title.textContent = track.title;
-  await audio.play();
   playButton.textContent = "Пауза";
   renderPlaylists();
+  try {
+    await audio.play();
+    await graph;
+  } catch {
+    playButton.textContent = "Слушать";
+    title.textContent = "Браузер не включил звук. Нажмите «Слушать» ещё раз.";
+  }
 }
 
 playButton.onclick = async () => {
   const track = currentTrack();
   if (!track) return;
-  if (!audio.src) {
+  if (!audio.src || audio.src.endsWith("/")) {
     await playIndex(state.index);
     return;
   }
-  await ensureGraph();
   if (audio.paused) {
-    if (audioCtx.state === "suspended") await audioCtx.resume();
-    await audio.play();
+    const graph = ensureGraph();
     playButton.textContent = "Пауза";
+    try {
+      await audio.play();
+      await graph;
+    } catch {
+      playButton.textContent = "Слушать";
+      title.textContent = "Браузер не включил звук. Нажмите «Слушать» ещё раз.";
+    }
   } else {
     audio.pause();
     playButton.textContent = "Слушать";
   }
 };
+
+audio.onplay = () => { syncViz(); };
+audio.onseeked = () => { if (!audio.paused) syncViz(); };
+audio.onpause = () => stopViz();
 
 audio.ontimeupdate = () => {
   if (!state.seeking && audio.duration) seek.value = String(Math.round(audio.currentTime / audio.duration * 1000));
@@ -129,6 +193,7 @@ seek.onpointerdown = () => { state.seeking = true; };
 seek.onchange = () => {
   if (audio.duration) audio.currentTime = audio.duration * (Number(seek.value) / 1000);
   state.seeking = false;
+  if (!audio.paused) syncViz();
 };
 volume.oninput = () => { audio.volume = Number(volume.value); };
 audio.volume = 0.8;
@@ -255,11 +320,18 @@ function draw() {
   ctx.fillStyle = "#0d0f12";
   ctx.fillRect(0, 0, width, height);
 
-  if (analyser && !audio.paused) {
+  if (realViz && analyser && !audio.paused) {
     analyser.getByteFrequencyData(freq);
     analyser.getByteTimeDomainData(wave);
-    const step = Math.floor(freq.length / levels.length);
+    const step = Math.max(1, Math.floor(freq.length / levels.length));
     for (let i = 0; i < levels.length; i++) levels[i] = freq[i * step] / 255;
+  } else if (!audio.paused) {
+    const t = audio.currentTime || 0;
+    wave = new Uint8Array(128);
+    for (let i = 0; i < levels.length; i++) {
+      levels[i] = 0.2 + 0.7 * Math.abs(Math.sin(t * 8 + i * 0.37) * Math.sin(t * 1.7 + i));
+    }
+    for (let i = 0; i < wave.length; i++) wave[i] = 128 + Math.sin(t * 14 + i * 0.2) * 70;
   } else {
     for (let i = 0; i < levels.length; i++) levels[i] *= 0.86;
   }
