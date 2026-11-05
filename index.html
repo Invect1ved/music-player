@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Музыкальный плеер</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <p class="eyebrow">Аттестация · 12 недель</p>
+      <h1>Плеер</h1>
+      <p id="now-title">Выберите трек</p>
+    </header>
+
+    <canvas id="stage" width="900" height="180" aria-label="Визуализация звука"></canvas>
+
+    <div class="transport">
+      <button id="play" type="button">Слушать</button>
+      <input id="seek" type="range" min="0" max="1000" value="0" />
+      <span id="time">0:00 / 0:00</span>
+      <label class="volume">Громкость <input id="volume" type="range" min="0" max="1" step="0.01" value="0.8" /></label>
+    </div>
+
+    <div class="modes">
+      <button id="shuffle" type="button">Случайно: выкл</button>
+      <button id="repeat" type="button">Повтор: нет</button>
+      <label class="file">Свой файл<input id="file" type="file" accept="audio/mpeg,audio/wav,audio/mp3,.mp3,.wav" multiple /></label>
+    </div>
+
+    <section class="lists">
+      <div>
+        <div class="list-head">
+          <h2>Плейлист</h2>
+          <select id="playlist"></select>
+        </div>
+        <ol id="tracks"></ol>
+      </div>
+      <form id="save-form">
+        <h2>Сохранить плейлист</h2>
+        <input name="name" required maxlength="40" placeholder="Название" />
+        <button type="submit">Сохранить</button>
+        <button id="remove-playlist" type="button">Удалить текущий</button>
+        <p class="hint">Свои файлы остаются в браузере. Демо-треки лежат в папке audio.</p>
+      </form>
+    </section>
+  </div>
+  <audio id="audio" preload="metadata"></audio>
+  <script src="player.js"></script>
+</body>
+</html>
